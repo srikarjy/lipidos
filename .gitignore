@@ -1,0 +1,6 @@
+.DS_Store
+data/
+.venv/
+pdfs.zip
+__pycache__/
+*.pyc

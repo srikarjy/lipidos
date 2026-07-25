@@ -1,0 +1,24 @@
+# Phase 1 — paper ingestion, parsing, embedding.
+# Pinned so the corpus build is reproducible. The previous attempt at this
+# project could not be rebuilt because nothing recorded what it ran on.
+
+requests==2.32.3        # NCBI eutils
+defusedxml==0.7.1       # untrusted network XML (entity-expansion defense)
+
+torch==2.7.0            # MPS backend on Apple Silicon
+numpy==1.26.4           # vector store + cosine search
+
+# adapters pins its own transformers range and will silently upgrade it.
+# Installing `adapters` moved transformers 4.51.3 -> 4.57.6 underneath us, which
+# quietly invalidated the earlier pin. Keep these two adjacent and pinned
+# together; check the pair after touching either.
+transformers==4.57.6    # BGE + SPECTER2
+adapters==1.3.0         # SPECTER2 proximity adapter (see scripts/embed.py)
+protobuf==5.29.3        # >=5.27 required by transformers' bert import
+
+# Phase 2 — answer generation (scripts/answer.py). mlx-lm's declared
+# dependency is transformers>=5.0.0; pip will warn about this pin on install,
+# but generation was smoke-tested and works fine against 4.57.6 -- leave the
+# pin alone, it protects adapters (see above), don't let mlx-lm silently
+# bump it again.
+mlx-lm==0.31.3           # Phi-3.5 Mini inference, Apple Silicon MPS/Metal

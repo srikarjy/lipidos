@@ -1,0 +1,215 @@
+# Lipid Raman Research Assistant — Progress
+
+Status doc. Every number here was measured, not estimated. Decisions and their
+reasoning live in `solutions.md`; open problems in `questions.md`.
+
+---
+
+**Project/Role:** Grounded literature + spectral retrieval system for Raman
+spectroscopy of lipids. Sole engineer — architecture, data pipeline, evaluation.
+
+**Dates:** 2026-07-15 → present. Phase 1 (ingestion) complete; Phase 2 (paper QA)
+complete — retrieval, citation grounding, and the base-model answer layer
+(Phi-3.5 Mini via MLX) all validated. Phase 3 (LIPID MAPS knowledge layer)
+complete, SwissLipids deferred (no queryable API found). Phase 4 (Context
+Builder) not started.
+
+**What I built:** A three-track retrieval system over the Raman/lipid literature
+where every claim resolves to a DOI.
+
+1. **Prose track** — JATS XML → section-aware paragraph chunks → BGE embeddings →
+   cosine search. Each chunk carries sentence offsets and a map of which inline
+   citation falls in which sentence, so a retrieved claim resolves to
+   claim → sentence → reference → DOI.
+2. **Peak table track** — spectral assignment tables parsed into structured rows
+   and queried by wavenumber **range**, never embedded. Cosine similarity has no
+   notion that 1659 cm⁻¹ is adjacent to 1663, but does treat "1663" and "1553" as
+   similar; wavenumber lookup is a range query, not a similarity problem.
+3. **Paper track** — SPECTER2 document embeddings for paper-level similarity.
+
+Plus two ingestion paths: PubMed-selected PMC full text (pipeline), and a
+citation-frontier fetcher that ranks papers by how often the corpus cites them,
+resolves OA status via Unpaywall, and fetches only legally open copies.
+
+**Technologies:** Python · SQLite · NumPy · PyTorch (MPS) · HuggingFace
+Transformers · BGE (bge-base-en-v1.5) · SPECTER2 + proximity adapter · defusedxml ·
+PyMuPDF · pdfplumber · NCBI E-utilities · Unpaywall · Crossref · arXiv API ·
+Phi-3.5 Mini 4-bit via mlx-lm (Apple Silicon local inference)
+
+**Scale:**
+
+| | |
+|---|---|
+| documents ingested | 217 JATS XML (post v4b filter, min_coocc=2) + 62 PDF (unparsed) |
+| papers parsed | 217 |
+| prose chunks, embedded | 7,833 |
+| peak table rows | not re-measured since v3 (was 1,058; peak-table papers now exempt from filtering) |
+| references resolved | not re-measured since v3 (was 19,674) |
+| inline citations mapped to sentences | not re-verified since v2 |
+| vectors | 7,833 × 768 + 217 × 768 |
+| search latency | exact brute-force cosine, sub-5ms at this scale |
+
+**Metrics:**
+
+- **Corpus redefinition: 7× more peak data.** v1 ("Raman AND lipid") returned
+  papers that *use* Raman; v2 targets papers that must *tabulate* assignments
+  (reviews, pure-lipid/model-membrane studies, explicit assignment work).
+  Peak rows 99 → 699. Single-paper concentration 85% → 12%. Papers contributing
+  tables 3 → 38. **2850 cm⁻¹ — the CH₂ symmetric stretch, the most fundamental
+  lipid band — went from 0 rows to 17.**
+- **Citation capture +27%** (2,639 → 3,360) after fixing citations nested in
+  `<sup>`; **3,360/3,360 offset integrity** verified (every citation lands inside
+  the sentence it is attributed to).
+- **Czamara Table 2 extracted and independently validated**: 35 lipids × 17
+  vibrational modes = 409 rows. **15/15 chemistry checks** (saturated lipids have
+  no C=C; unsaturated show C=C at 1653–1657 with =CH at 3002–3005; triacylglycerols
+  carry ester C=O at 1727–1749, doublet preserved). **200/200 cell agreement**
+  against an independent extraction of the same table.
+- **Retrieval: 14/14** curated domain queries return relevant top hits
+  (mean top-1 cosine 0.784).
+- **Scaling measured, not guessed**: brute-force cosine is 3.1 ms at the full
+  reachable corpus (48k chunks / 148 MB) and stays exact. The memory cliff is at
+  ~2M vectors (≈52k papers → 6.1 GB → 18.9 s/query from swapping) — which is the
+  scale of a prior failed attempt at this project, and a likely cause of it.
+
+**Hard technical problems:**
+
+1. **Silent corruption is the dominant failure mode in this domain.** Every text
+   extraction tool tried destroys exactly the characters spectroscopy depends on,
+   and none of them error. The PubMed MCP tool's `full_text` drops all table
+   bodies, all inline citations (flattened to `[]`), superscripts (`1662 cm⁻¹` →
+   `1662 cm`) and Greek symbols — 56 KB vs 350 KB of raw JATS on the same paper.
+   A full-text academic search tool strips ν/δ from mode labels and renders
+   `ν(C-C)` as `(C  C)`, ambiguous against C=C. My own parser shipped six such
+   bugs. **The output always looks plausible.** Countermeasure: raw-first storage
+   (parse is separable from fetch — the corpus was re-parsed six times without
+   re-downloading), plus integrity assertions and independent cross-validation
+   rather than eyeballing.
+
+2. **PubMed cannot see this field.** Raman spectroscopy is analytical chemistry;
+   PubMed indexes biomedicine. `"Raman spectroscopy of lipids"[Title]` → **0 hits**.
+   The corpus cites 23,360 unique DOIs and holds 117 of them; 35% of that frontier
+   is Wiley/RSC/Elsevier, which PMC does not carry. Solved by ranking the frontier
+   by citation count and fetching legal OA copies — and by discovering that
+   `is_oa: true` is not a fetch guarantee (the most-cited missing paper's "green OA"
+   record was metadata-only, with no file attached).
+
+3. **In a PDF table, the empty cells are the chemistry.** The flat text stream of
+   Czamara Table 2 reads `MA 2943 2909 2869 2832 1457 1433 1419` — seven numbers
+   for ten columns, with no indication which three are blank. Those blanks encode
+   that myristic acid is saturated and therefore has no C=C. Collapsing the row
+   left-to-right assigns a C=C stretch to a saturated fatty acid. Solved with
+   `pdfplumber(text_x_tolerance=1)`; the default (3) fuses adjacent mode columns.
+   The table also spans two pages with different layouts — the continuation page
+   carries lipid identity only by row order — so the pages are zipped by index
+   under an assertion that both yield exactly 35 rows.
+
+4. **Selection, not scale, is the bottleneck.** Searching PMC full text returns
+   36,822 hits for Raman+lipid because a paper mentioning "lipid" once in its
+   bibliography matches; PubMed's title/abstract/MeSH index returns 4,316. Select
+   in PubMed, fetch from PMC.
+
+5. **Retrieval "I don't know" gap: −0.007 → +0.002. Closed out for now.**
+   v3 (review dilution) didn't move it. Diagnosed the gap-driving papers
+   (ovarian-cancer exosome/SERS, cold-plasma food science) and found a real
+   signal: papers where "Raman" and a lipid term never co-occur in the same
+   chunk contribute peak tables at 3% vs 16% for 10+ co-occurring chunks.
+   Dropped zero-co-occurrence papers, then pushed to `min_coocc=2` (with a
+   guard exempting any paper that already contributes `peak_tables` rows —
+   table data lives outside chunk text, so the naive filter would have cut
+   PMC10670390, an 84-peak-row paper). 328→217 papers across both rounds.
+   Gap stuck at +0.002 both times. Root-caused: the ceiling score is pinned
+   by a *legitimate* paper (SRS microscopy of lipid unsaturation in ovarian
+   cancer cells) that shares surface vocabulary with an unrelated
+   out-of-domain query — an embedding-model limitation, not corpus
+   contamination. Further filtering would mean cutting good data to game a
+   metric. Corpus-side fix is done; closing this further needs a query-side
+   domain gate, not more corpus surgery. Deferred, not blocking.
+
+**What I personally did:** Set the architecture and the constraints it had to
+satisfy; drove corpus quality as the primary axis when retrieval "looked fine";
+supplied the Czamara review that no API could reach; directed tool selection
+(surfacing that a full-text academic search tool covers the Wiley literature
+PubMed cannot, which produced the independent extraction that caught a column
+off-by-one silently mislabelling every unsaturated lipid's C=C as a carbonyl);
+and rejected hand-rolled geometry in favour of a library, which proved both faster
+and more correct.
+
+---
+
+## Next
+
+Ordered by what unblocks the most.
+
+1. ~~**Evaluation set from real bench questions.**~~ **Done (2026-07-24).**
+   `scripts/mine_bench_questions.py` mines papers' own Introduction goal
+   statements ("we aimed to distinguish X from Y"); 15 curated + 4 questions
+   grounded in the Czamara review added to `eval_queries.py`, each mined query
+   carrying the source `known_paper_id` as ground truth. **Recall@10: 15/15
+   (100%)** — every source paper was retrieved by its own question, mean top-1
+   score 0.891. See `solutions.md` for the full method and why this check
+   matters beyond the constructed 16.
+2. ~~**Tighten the corpus.**~~ **Done (v3, 2026-07-23).** `Review[Publication
+   Type]` in the v2 query gave any review a pass if "Raman" and a lipid term
+   appeared anywhere in the record; measured on v2, review-only papers
+   contributed peak tables at 3% vs 11% for every other group. Fixed by
+   requiring `Raman[Title] AND lipid-terms[Title]` for the review branch.
+   426→328 papers, 16,286→12,181 chunks, peak-table-paper density 9.2%→11.0%.
+   **Prediction falsified:** separation gap unchanged at −0.007 — corpus
+   dilution was not the cause of the "can't say I don't know" problem. See
+   `solutions.md` for the full diagnostic and the corrected (previously
+   unmeasured) 61% figure.
+3. ~~**Diversity-aware retrieval.**~~ **Done (2026-07-23).** `search_chunks` in
+   `query.py` now over-fetches a pool, caps at 2 evidence items per paper, and
+   merges chunks adjacent in source-document order (consecutive `chunk_id`)
+   into one item. Mean distinct papers in top-5: 2.7 → 4.14. Free fix — top-1
+   scores and the separation gap are untouched, since capping only affects
+   positions 2-5. `eval_queries.py` now measures this directly.
+4. ~~**Agreement counts, not confidence scores.**~~ **Done (2026-07-24).**
+   `query.py --peaks W` now groups by paper and reports "N independent papers"
+   (`COUNT(DISTINCT paper_id)`, not row count — a 35-lipid review table doesn't
+   count as 35 sources). `--agreement-report` adds a corpus-wide leaderboard,
+   pure SQL bin/group/having. Measured leaders: 1005 cm⁻¹ (phenylalanine, 12
+   papers), 1440 (CH₂ deformation, 9), 1130 & 1660 (8) — chemically sane.
+   Assignment text deliberately left unnormalised (see `solutions.md`); known
+   caveat that fixed-width binning can split one physical band across two bins.
+5. ~~**Peak-set matching.**~~ **Done, position-only (2026-07-24).** `query.py
+   --peak-set "2846,3009,1670,1739"` groups `peak_tables` by species (`origin`)
+   and ranks by how many observed peaks match that species' known bands.
+   Verified against cholesteryl oleate's own Czamara bands: exact 4/4 match,
+   unambiguous top hit. Intensity ratios (I₂₈₈₀/I₂₈₅₀ chain order, I₁₆₆₀/I₁₄₄₀
+   unsaturation) deliberately deferred — no literature-sourced classification
+   threshold to score against without fabricating one. See `solutions.md`.
+6. **Prose from the 61 unparsed PDFs.** PyMuPDF `get_text("blocks")` is column-aware
+   and runs the whole PDF corpus in 12.9 s. Tag `source='pdf'` — PDF text carries
+   glyph damage (`375 cm1`, `υ▷CH2◁`) that JATS does not, so measure whether those
+   chunks retrieve worse.
+7. ~~**Czamara Table 1 → LIPID MAPS.**~~ **Done (2026-07-24).** `scripts/resolve_lipid_identity.py`
+   resolves 29/35 acronyms to LIPID MAPS records (LM_ID, classification, formula),
+   cached in `lipid_identity`. `query.py --peaks`/`--peak-set` now show resolved
+   names. 6 unresolved are genuine LIPID MAPS coverage gaps, not a bug. See
+   `solutions.md` for the PubChem-CID + abbrev-fallback resolution chain, and why
+   SwissLipids was evaluated and deferred (no queryable per-compound API).
+8. **Embedding on Colab Pro.** 16k chunks = 27 min on M2 MPS; ~48k ≈ 80 min. An A100
+   makes the re-embed loop cheap while iterating on corpus definition. Parsing stays
+   local — it is CPU-bound (PyMuPDF: 1,034 pages in 12.9 s).
+
+## Deliberately not built
+
+- **Vector database (pgvector/FAISS/Chroma).** They solve approximate search at a
+  scale we cannot reach. Brute force is 3.1 ms and *exact* at the full corpus;
+  adopting ANN would trade exactness for speed we do not need, and pgvector-in-Docker
+  costs RAM against the model on an 8 GB machine. FAISS becomes correct at ~2M
+  vectors — 40× beyond the entire reachable literature.
+- **Blended confidence scores.** Cosine 0.80 is not 80% confidence. Combining a
+  retrieval score, a database hit-count and a classifier probability yields a number
+  with no units that looks authoritative. Surface each signal separately.
+- **AI-generated-text detection.** No reliable detector exists, and false positives
+  land hardest on non-native-English scientific writing — a large share of this
+  literature. Verifiable provenance facts are shipped instead: retraction/erratum
+  status (all 426 papers checked, zero flagged), publication type, MEDLINE indexing,
+  each with the date checked.
+- **General-purpose PDF table extraction.** Layout varies per paper — a parser tuned
+  to one J. Raman Spectrosc. table fails on the next paper in the same journal
+  (two-column body). Triage says only 3–4 of 62 PDFs carry peak tables. JATS is the
+  pipeline; PDF is the scalpel.
