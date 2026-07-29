@@ -266,3 +266,48 @@ Assignment text is left as free text, not normalised into a canonical label — 
 **Measured, `--min-papers 4`, 5 cm⁻¹ bins on the current (v4b, 217-paper) corpus:** 1005 cm⁻¹ (phenylalanine ring breathing) leads at 12 papers; 1440 (CH₂ deformation) at 9; 1130 and 1660 at 8. All three are textbook Raman markers — the ranking is chemically sane, not an artifact.
 
 **Known coarseness:** fixed-width binning can split one physical band across two adjacent bins near an edge (1440 and 1445 both surfaced as separate 6-9-paper bins in one run — plausibly the same band, split by rounding). Not fixed; narrowing/widening `--bin-width` is the current lever, same unresolved tension as the tolerance-window problem already parked in `questions.md`.
+
+---
+
+### 2026-07-27 — PDF prose ingestion (`parse_pdf.py`), run for real
+**Question:** `parse_pdf.py` existed but had never been run against the DB (no `source` column present) — 61 of the 62 raw PDFs had no prose in the corpus at all, only whatever peak-table data a handful had via bespoke extractors.
+
+**Bug found before running:** the file's own comment said Czamara should be skipped ("skip its prose... skip the file we know is table-only noise") but no skip code existed. `eval_queries.py` (line 20) independently documents the invariant that Czamara "isn't chunked/embedded, only its peak table data" — its review prose is a trusted reference source (`parse_czamara.py`, `paper_id='czamara2015'`), not meant to be a retrievable paper alongside everything else. Running the script as-is would have created a second paper (`pdf:czamara2014`) and silently broken that invariant. Fixed: `parse_pdf.py` now explicitly filters `czamara2014.pdf` out of its glob, with a comment pointing at why.
+
+**Result:** 61 PDFs → 4,632 prose chunks, tagged `source='pdf'`. Corpus: 220→281 papers, 7,931→12,563 chunks. DB snapshotted to `data/papers_pre_pdf_ingest_safety.db` first.
+
+**Re-embedding deferred, not done today.** `embed.py`'s output note in `parse_pdf.py` ("must be updated to embed only unvectorised chunks") is stale — the actual `embed_chunks` code already re-embeds every chunk unconditionally every run, so no code change was needed there. Chose to hold off running it locally (~15-20 min extrapolated from 27 min/16k chunks on M2 MPS) and instead batch it with the Colab Pro A100 move (`PROGRESS.md` item 8), rather than eating the local wait twice. Until that re-embed runs, the new `source='pdf'` chunks have `vector_row_idx=NULL` and are invisible to retrieval — `chunk_vectors.npy` still reflects the pre-ingestion 7,931-chunk state.
+
+---
+
+### 2026-07-28 — Knowledge graph layer: Neo4j AuraDB (cloud), not local Docker
+**Question:** the user wants to *see* how lipids, classes, papers, and citations relate — a visualization/exploration need, not a retrieval-performance need. Does this contradict the earlier decision (`PROGRESS.md` "Deliberately not built") to reject pgvector/FAISS as unnecessary infra?
+
+**Decision:** no — different need, different verdict. The vector-DB rejection was about *approximate search at a scale we don't have*; brute-force cosine is exact and fast enough, so ANN would only cost RAM. A graph database's value here isn't query speed, it's that Cypher traversal (and Neo4j Browser's visualization) makes relationship structure legible in a way SQL joins over `papers.db` don't, even at this small scale. Built it as a **derived, rebuildable layer** — `papers.db` stays canonical, `scripts/build_graph.py` re-derives the graph from it (same shape as `resolve_lipid_identity.py`'s cache: wipe-and-rebuild, not migrate).
+
+**Where it runs:** Neo4j AuraDB Free (cloud), not local Docker — the 8GB M2 Air already runs MLX inference outside Docker specifically to avoid RAM contention (see `PROGRESS.md`); adding a local Neo4j instance would recreate that exact problem for no benefit, since the free cloud tier costs nothing but a network hop.
+
+**Graph model, validated against the live DB before building:**
+- `peak_tables` has 546 rows carrying a species `origin` tag (104 distinct origins), but only 29 resolve to a full `lipid_identity` record (the Czamara 35-species table) — those 29 became `Lipid` nodes; unresolved origins don't get a node (would need a second identity-resolution pass, out of scope here).
+- `references` has 11,307 rows with a DOI, but only 867 resolve to a DOI this graph actually has a `Paper` node for (in-corpus `papers.doi` or tracked `frontier.doi`) — the rest point outside both tables and would be dangling edges, so `fetch_citations` filters to resolvable pairs before ever touching Neo4j, rather than sending unresolvable rows and letting `MERGE`'s `MATCH` silently no-op them.
+- Including `frontier` (papers tracked by the citation-frontier fetcher but not ingested) as lightweight `Paper` nodes alongside `papers` roughly triples the citation graph's reach for free — 163 frontier-only papers added, vs 255 in-corpus.
+
+**Deliberately not built:** chunk-level `(Paper)-[:MENTIONS]->(Lipid)` edges. Would need free-text matching lipid names against prose chunks — a real NLP task, not proportionate to what was asked. Parked in `questions.md`.
+
+---
+
+### 2026-07-28 — Colab re-embed surfaced junk PDF titles; parse_pdf.py's title metadata was never trustworthy
+
+**Question:** `embed.py` was run on Colab's A100 (`colab/embed_chunks.ipynb`) to finally vectorize the 12,563-chunk corpus, including the 4,632 `source='pdf'` chunks from PDF ingestion that had sat with `vector_row_idx=NULL` since 2026-07-27. Did it work?
+
+**First failure, immediately visible:** `query.py`/`answer.py` crashed (`TypeError: 'NoneType' object is not subscriptable`) the first time a PDF-sourced chunk ranked in a top-k result — a paper title was `NULL`. 23 of 281 papers had this: `parse_pdf.py`'s `title_of()` reads PDF metadata unconditionally and many raw PDFs simply have no title field. This was invisible until today because those chunks had no vector and were unreachable by any query before the Colab run.
+
+**Second failure, not caught by the first fix:** patched the crash (fall back to `paper_id`/`doi` in three print sites), then wrote `scripts/backfill_titles.py` scoped to `title IS NULL` and resolved all 23 via Crossref (5 with a DOI) or arXiv's `id_list` API (18 arXiv-only, extracting the id from the `pdf:arxiv_...` paper_id). Verification query still showed a garbage title: `'ac5b04468 1..9'` for an ACS paper. Not `NULL` — this is a second, worse failure shape: `title_of()` trusts *whatever string is in the PDF's metadata title field*, and for many publishers that isn't the paper title at all. Found 13 more across the 61 `pdf:` papers: `"Microsoft Word - Nature_Protocols_Final_BW.docx"`, `"No Job Name"`, bare manuscript IDs (`"ac500014b 1..5"`, `"lsa201538 1..10"`, `"pone.0005189 1..12"`), even a raw `"doi:10.1016/j.colsurfb.2004.12.021"` string used as a title. None of these are `NULL`, all look like plausible strings at a glance — exactly the "output looks plausible, nothing errors, it's just quietly wrong" failure class `PROGRESS.md` problem #1 already names for text extraction generally, just showing up in a metadata field instead of body text this time.
+
+**Fix:** rewrote `backfill_titles.py` to stop trusting PDF-internal title metadata as authoritative at all. It now targets every `pdf:`-sourced paper (not just `NULL` ones) and always attempts Crossref (has DOI) or arXiv (no DOI) first, keeping the existing PDF-metadata title only as a last resort if the network lookup fails. Result: 13/61 titles corrected, one genuine miss kept as-is (`arxiv_0606030v1` — not a valid arXiv ID format, likely a mis-parsed filename from the original `fetch_arxiv.py`/manual-acquisition step, no lookup possible).
+
+**Third-order consequence, the one that would have been silent:** `embed.py` prepends title to the chunk text before embedding (`f"{title}\n{section}\n\n{text}"`) — a bare paragraph is unretrievable without knowing which paper it's from. The title fix ran *after* the Colab embed, so 1,122 chunks belonging to those 13 papers had already been vectorized with the junk title baked into the BGE input. Re-embedding the full 12,563-chunk corpus again for a 1,122-chunk fix would have meant another full Colab round-trip; instead, patched just those 1,122 rows in `chunk_vectors.npy` in place (same `vector_row_idx` positions, re-encoded with the corrected title), locally on M2 MPS — small enough to not need the A100. Verified: `chunk_vectors.npy` shape unchanged, retrieval on two independent test queries returns clean top hits with no crash and correct titles.
+
+**Consequence for the pipeline order:** title correctness must be settled *before* embedding, not after — `backfill_titles.py` should run right after `parse_pdf.py` and before `embed.py` for any future PDF ingestion, or this same stale-embedding problem recurs. Not yet enforced in code (no ordering check), just documented here.
+
+**Separately, unrelated to titles:** the Colab run logged `WARNING:adapters.model_mixin:There are adapters available but none are activated for the forward pass` during SPECTER2 paper-embedding, raising a concern that the proximity adapter silently wasn't active. Checked against this file's own 2026-07-15 entry ("SPECTER2 proximity adapter: tried, made no difference") — already proven with n=28 and n=425 that adapter-vs-no-adapter is statistically identical for this corpus (topical homogeneity, not a model artifact). Today's n=281 measurement (mean 0.879, std 0.027) lines up with those prior numbers, so even if the adapter was inactive this run, it already wouldn't have mattered. No re-run needed — did not repeat work already falsified.

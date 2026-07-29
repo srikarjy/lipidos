@@ -71,7 +71,7 @@ def main() -> int:
 
     print(f"\n=== RAG PANEL: evidence for {a.question!r} ===")
     for i, h in enumerate(hits, 1):
-        print(f"\n[{i}] [{h['score']:.3f}] {h['title'][:66]} ({h['year']})")
+        print(f"\n[{i}] [{h['score']:.3f}] {(h['title'] or h['paper_id'])[:66]} ({h['year']})")
         print(f"    {h['sec'] or '(no section)'}  doi:{h['doi']}")
         body = h["text"] if len(h["text"]) < 300 else h["text"][:300] + " ..."
         print(f"    {body}")

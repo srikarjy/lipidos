@@ -32,6 +32,10 @@ Consequences to work out when we get there:
 Our 28 papers cite 2,600 references, 2,329 with DOIs. The most-cited are the field's foundational papers (Freudiger label-free imaging, 7/28; Kong et al. Raman for cancer, 6/28; Haka breast cancer, 5/28). **The Czamara review (10.1002/jrs.4607) is cited by 4 of 28** — our corpus points straight at the paper we established is unreachable via PubMed/PMC/Europe PMC but *is* green OA at ruj.uj.edu.pl.
 **Matters because:** snowball sampling from the reference graph finds what the field considers load-bearing, which a keyword query cannot. It also gives a ranked, evidence-based target list for the Crossref/Unpaywall track — instead of guessing which paywalled papers are worth chasing.
 
+### Knowledge graph: chunk-level "Paper MENTIONS Lipid" edges
+`scripts/build_graph.py` only links `Paper` to `Lipid` via `peak_tables` (structured data, already keyed by species `origin`). Prose chunks mention lipids in free text too, but connecting them would mean matching lipid full names/synonyms against chunk text — real NLP (aliases, plurals, "cholesteryl oleate" vs "COA" vs "18:1 cholesteryl ester"), not a join.
+**Matters because:** would meaningfully enrich the graph (281 papers' worth of prose vs the 255 that have a resolved peak-table row today) but wasn't asked for and risks silent false positives (a paper name-dropping "cholesterol" in an unrelated sentence). Deferred until there's an actual use case that needs it.
+
 ### Retrieval quality is unmeasured
 The end-to-end query returns plausible results (0.80 cosine on a cholesterol question, correctly surfacing the 1655/1443 unsaturation ratio). Plausible is not measured. There is no question set, no relevance judgement, no baseline.
 **Matters because:** "document the embedding model" was a Phase 1 goal, and documenting an unmeasured choice records a guess. Blocks the BGE/MedCPT/SPECTER2 bake-off, and blocks knowing whether Phase 2 (paper QA) is even worth starting.

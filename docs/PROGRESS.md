@@ -180,19 +180,53 @@ Ordered by what unblocks the most.
    unambiguous top hit. Intensity ratios (I₂₈₈₀/I₂₈₅₀ chain order, I₁₆₆₀/I₁₄₄₀
    unsaturation) deliberately deferred — no literature-sourced classification
    threshold to score against without fabricating one. See `solutions.md`.
-6. **Prose from the 61 unparsed PDFs.** PyMuPDF `get_text("blocks")` is column-aware
-   and runs the whole PDF corpus in 12.9 s. Tag `source='pdf'` — PDF text carries
-   glyph damage (`375 cm1`, `υ▷CH2◁`) that JATS does not, so measure whether those
-   chunks retrieve worse.
+6. ~~**Prose from the 61 unparsed PDFs.**~~ **Done (2026-07-27).** `parse_pdf.py`
+   run for real: 61 PDFs → 4,632 prose chunks, tagged `source='pdf'` (Czamara
+   excluded — see `solutions.md`, its review text stays table-only per the
+   invariant `eval_queries.py` depends on). Corpus: 220→281 papers, 7,931→12,563
+   chunks. Not yet embedded — new chunks have `vector_row_idx=NULL` and are
+   invisible to retrieval until item 8 runs. Once embedded, measure whether
+   `source='pdf'` chunks retrieve worse than `source='jats'` (glyph damage:
+   `375 cm1`, `υ▷CH2◁`).
 7. ~~**Czamara Table 1 → LIPID MAPS.**~~ **Done (2026-07-24).** `scripts/resolve_lipid_identity.py`
    resolves 29/35 acronyms to LIPID MAPS records (LM_ID, classification, formula),
    cached in `lipid_identity`. `query.py --peaks`/`--peak-set` now show resolved
    names. 6 unresolved are genuine LIPID MAPS coverage gaps, not a bug. See
    `solutions.md` for the PubChem-CID + abbrev-fallback resolution chain, and why
    SwissLipids was evaluated and deferred (no queryable per-compound API).
-8. **Embedding on Colab Pro.** 16k chunks = 27 min on M2 MPS; ~48k ≈ 80 min. An A100
-   makes the re-embed loop cheap while iterating on corpus definition. Parsing stays
-   local — it is CPU-bound (PyMuPDF: 1,034 pages in 12.9 s).
+8. ~~**Embedding on Colab Pro.**~~ **Done (2026-07-28).** All 12,563 chunks
+   (BGE) + 281 papers (SPECTER2) re-embedded on an A100 via
+   `colab/embed_chunks.ipynb` (writes `scripts/embed.py` verbatim into the
+   Colab runtime so the logic run there can't drift from the repo). SPECTER2
+   proximity-adapter warning during the run turned out not to matter — mean
+   pairwise cosine 0.879/std 0.027 at n=281 lines up with the already-falsified
+   adapter hypothesis from 2026-07-15 (see `solutions.md`: corpus topical
+   homogeneity, not a model artifact, was already proven to explain this).
+   Surfaced two real, previously-invisible data-quality bugs in the 61 PDF-
+   sourced papers once their chunks became retrievable for the first time —
+   23 `NULL` titles and 13 more with junk PDF-metadata titles ("Microsoft
+   Word - ....docx", "No Job Name", bare manuscript IDs) masquerading as real
+   ones. Fixed via `scripts/backfill_titles.py` (Crossref/arXiv lookup,
+   PDF-internal title never trusted as authoritative again), plus a targeted
+   local re-embed of the 1,122 chunks whose BGE input had stale junk-title
+   text baked in, plus defensive fixes in `query.py`/`answer.py` so a missing
+   title can never crash retrieval again. See `solutions.md` for the full
+   incident writeup.
+9. ~~**Knowledge graph layer (Neo4j AuraDB).**~~ **Done (2026-07-28).**
+   `scripts/build_graph.py` derives a graph from `papers.db` (Paper, Lipid,
+   LipidClass, LipidSubclass nodes; CITES, REPORTS_PEAK, IN_CLASS,
+   IN_SUBCLASS edges) — SQLite stays canonical, the graph is rebuilt from it,
+   never migrated. Runs against AuraDB Free (cloud), not local Docker, to
+   avoid the same RAM contention that keeps MLX inference outside Docker.
+   418 Paper nodes (255 in_corpus + 163 frontier-only, added for free
+   citation reach), 867 CITES edges, 29 Lipid nodes, 345 REPORTS_PEAK edges.
+   `scripts/graph_query.py` adds two traversals SQL handles poorly:
+   `--lipid-neighbors` (class/subclass + lipids sharing peak-report papers)
+   and `--citation-path` (shortest citation chain between two DOIs), both
+   verified against live data. General exploration happens in Aura's own
+   Neo4j Browser. See `solutions.md` for why this doesn't contradict the
+   earlier pgvector/FAISS rejection (visualization need, not a performance
+   need) and `questions.md` for the deferred chunk-level MENTIONS edges.
 
 ## Deliberately not built
 

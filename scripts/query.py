@@ -267,7 +267,7 @@ def main() -> int:
         print(f"\n=== PAPERS SIMILAR TO {args.similar_to} (SPECTER2) ===")
         print(f"    source: {src[0][:70] if src else '?'}\n")
         for score, (pid, title, doi, year) in similar_papers(db, args.similar_to, args.k):
-            print(f"  [{score:.3f}] {pid:13} ({year}) {title[:58]}")
+            print(f"  [{score:.3f}] {pid:13} ({year}) {(title or pid)[:58]}")
             print(f"            doi:{doi}")
 
     # Track 2: structured lookup. A wavenumber is a measurement, not a string --
@@ -279,7 +279,7 @@ def main() -> int:
         print(f"\n=== PEAK TABLE AGREEMENT for {args.peaks} +/-{args.tol} cm-1 ===")
         print(f"    {len(by_paper)} independent papers report a peak in this window")
         for pid, d in by_paper.items():
-            print(f"\n  {pid}  {d['title'][:60]}  doi:{d['doi']}")
+            print(f"\n  {pid}  {(d['title'] or pid)[:60]}  doi:{d['doi']}")
             for wl, wh, asg, origin in d["rows"]:
                 band = f"{wl:.0f}" + (f"-{wh:.0f}" if wh != wl else "")
                 tag = origin
@@ -330,7 +330,7 @@ def main() -> int:
     for score, (text, sec, xrefs, spans, title, doi, paper_id, year) in \
             search_chunks(db, qvec, args.k, pool=args.pool,
                           max_per_paper=max_per_paper):
-        print(f"\n[{score:.3f}] {title[:66]} ({year})")
+        print(f"\n[{score:.3f}] {(title or paper_id)[:66]} ({year})")
         print(f"        {sec or '(no section)'}")
         print(f"        doi:{doi}")
         body = text if len(text) < 460 else text[:460] + " ..."

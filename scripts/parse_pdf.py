@@ -125,10 +125,11 @@ def main() -> int:
         db.execute("ALTER TABLE chunks ADD COLUMN source TEXT DEFAULT 'jats'")
         db.commit()
 
-    pdfs = sorted(PDF_DIR.glob("*.pdf"))
-    # Czamara is a table paper handled elsewhere; skip its prose to avoid dupes
-    # is unnecessary -- it is a different paper_id -- but skip the file we know
-    # is table-only noise. Everything else is prose.
+    pdfs = sorted(p for p in PDF_DIR.glob("*.pdf") if p.stem != "czamara2014")
+    # Czamara is handled exclusively by parse_czamara.py (peak_tables only,
+    # paper_id='czamara2015'). eval_queries.py depends on it staying
+    # unchunked/unembedded as a trusted reference source, not a retrievable
+    # paper -- so its prose is deliberately excluded here.
     total_chunks = 0
     per_paper = []
     for pdf in pdfs:

@@ -22,3 +22,10 @@ protobuf==5.29.3        # >=5.27 required by transformers' bert import
 # pin alone, it protects adapters (see above), don't let mlx-lm silently
 # bump it again.
 mlx-lm==0.31.3           # Phi-3.5 Mini inference, Apple Silicon MPS/Metal
+
+# Phase 3b -- knowledge graph (scripts/build_graph.py, scripts/graph_query.py).
+# Derived layer, rebuilt from papers.db; SQLite stays canonical. Runs against
+# Neo4j AuraDB Free (cloud), not local Docker -- the 8GB M2 Air already fights
+# for RAM with MLX inference, same reason MLX itself runs outside Docker.
+neo4j==5.28.1            # driver, talks to AuraDB over neo4j+s://
+python-dotenv==1.0.1     # loads .env (Aura's own credential-file format)
