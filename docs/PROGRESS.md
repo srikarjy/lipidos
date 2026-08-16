@@ -331,7 +331,23 @@ Ordered by what unblocks the most.
     claim (judge: YES).** Known limitation, not glossed over: one false
     positive on a non-substantive preamble sentence ("Evidence #3 and #5
     together provide the answer") — the sentence splitter doesn't
-    distinguish framing text from real claims.
+    distinguish framing text from real claims. Fixed same day: strips the
+    citation phrase itself out of each sentence and skips ones with too
+    little remaining content (<6 words) to be a real claim — verified live,
+    mismatch count went from 2/3 (including the false positive) to 1/2
+    (just the real bug), same genuine catch preserved.
+16. ~~**LIME explainability for retrieval.**~~ **Done (2026-08-15).**
+    `scripts/explain_retrieval.py` — retrieval's cosine-similarity scoring
+    has no classifier to introspect, which is exactly the black-box setup
+    `LimeTextExplainer` is built for: perturbs the query, re-scores each
+    perturbation against the retrieved chunk, fits a local linear model
+    over which words moved the score. Runs fully locally (BGE on this
+    machine's MPS), no GPU job needed. **Verified on a real query**
+    ("how does the 1655 band shift with unsaturation?"): surfaced that the
+    top-1 result was driven mainly by the generic words "band"/"shift"
+    (weights +0.058/+0.013), not the specific terms "1655"/"unsaturation"
+    (small negative weight) — a genuine, actionable retrieval-quality
+    signal, not just a demo of the tool working.
 
 ## Deliberately not built
 
