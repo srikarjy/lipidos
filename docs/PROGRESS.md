@@ -308,6 +308,30 @@ Ordered by what unblocks the most.
     comfortably fit this project's 8 GB M2 development machine. **Verified
     working end-to-end**: real question → 5 merged evidence items → cited
     interpretation referencing evidence #2/#3/#5, zero hallucinated IDs.
+14. ~~**Model card + single-command pipeline entry point.**~~ **Done
+    (2026-08-15).** Both fine-tuned model repos flipped public; their
+    auto-generated Unsloth boilerplate READMEs replaced with real model
+    cards (training data, measured perplexity results, usage, links back to
+    this repo). `scripts/ask.py` wraps `build_evidence.py` +
+    `generate_finetuned_answer.py` into one command instead of two manual
+    steps — verified end-to-end on a real question.
+15. ~~**Semantic citation-faithfulness check.**~~ **Done (2026-08-15).**
+    `check_citations` (used throughout — `answer.py`,
+    `verify_finetuned_citations.py`, `generate_finetuned_answer.py`) only
+    ever verified a cited evidence *number* exists, never that the cited
+    evidence's *content* supports the claim. `ask.py`'s first real run
+    surfaced a live example: the fine-tuned model cited evidence #3 as the
+    source of a "760 cm⁻¹ band" claim that evidence #1 actually made — a
+    valid number, wrong attribution, invisible to the old check.
+    `scripts/semantic_citation_check.py` closes this gap: splits the answer
+    into sentences, and for each cited evidence number runs an
+    LLM-as-judge entailment call (does this evidence support this claim?).
+    **Verified against that exact bug — correctly flagged the
+    misattribution (judge: NO) and correctly passed a genuinely-supported
+    claim (judge: YES).** Known limitation, not glossed over: one false
+    positive on a non-substantive preamble sentence ("Evidence #3 and #5
+    together provide the answer") — the sentence splitter doesn't
+    distinguish framing text from real claims.
 
 ## Deliberately not built
 
