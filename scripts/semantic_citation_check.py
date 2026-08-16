@@ -64,6 +64,27 @@ def cited_ids_in(sentence: str) -> list[int]:
     return sorted({int(n) for n in re.findall(r"evidence\s*#?(\d+)", sentence, re.I)})
 
 
+# Matches a citation phrase like "Evidence #3", "(Evidence #3 and #5)",
+# "evidence #3, #5" -- the whole reference, not just the digits, so it can
+# be stripped out entirely to see what claim (if any) is left.
+CITATION_PHRASE_RE = re.compile(
+    r"\(?\s*evidence\s*#?\d+(\s*(,|and)\s*#?\d+)*\s*\)?", re.I)
+
+
+def is_substantive_claim(sentence: str, min_words: int = 6) -> bool:
+    """False on framing/preamble sentences whose only content is announcing
+    which evidence is being used (e.g. "Evidence #3 and #5 together provide
+    the answer") -- these aren't claims the evidence needs to "support", and
+    judging them against evidence content produces a spurious NO. Real
+    claims stay well over the word-count floor even after the citation
+    phrase itself is stripped out; found via a live false positive
+    (2026-08-15, see docs/solutions.md) on exactly this shape of sentence.
+    """
+    remainder = CITATION_PHRASE_RE.sub("", sentence)
+    words = re.findall(r"[A-Za-z0-9]+", remainder)
+    return len(words) >= min_words
+
+
 def main() -> int:
     if not torch.cuda.is_available():
         print("ERROR: no CUDA GPU available.", file=sys.stderr)
@@ -88,6 +109,10 @@ def main() -> int:
     for sentence in split_sentences(answer):
         ids = cited_ids_in(sentence)
         if not ids:
+            continue
+        if not is_substantive_claim(sentence):
+            print(f"  (skipped, framing/preamble only, no independent claim): "
+                  f"{sentence[:80]}")
             continue
         for eid in ids:
             ev = by_id.get(eid)
