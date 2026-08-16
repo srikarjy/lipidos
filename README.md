@@ -61,7 +61,7 @@ Build phases from [`lipid-raman-rag-blueprint.md`](lipid-raman-rag-blueprint.md)
 | 3 — Lipid knowledge layer | Done (LIPID MAPS) — 29/35 Czamara acronyms resolved; SwissLipids evaluated and deferred (no queryable API) |
 | 4 — Context Builder | Not started |
 | 5 — Raman integration (peaks → CNN/PCA → context) | Not started as specified; `--peak-set` covers part of the intent via direct table lookup |
-| 6 — Fine-tuning | Not started |
+| 6 — Fine-tuning | Done — QLoRA (Unsloth) domain-adaptation fine-tune of Phi-3.5 Mini on 64,000 lipid/Raman abstracts; held-out perplexity 4.911 → 3.955 (19.5% lower) |
 
 Full details, measured numbers, and the reasoning behind every non-obvious
 decision: [`docs/PROGRESS.md`](docs/PROGRESS.md) (status) and

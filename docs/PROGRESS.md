@@ -34,7 +34,8 @@ resolves OA status via Unpaywall, and fetches only legally open copies.
 **Technologies:** Python · SQLite · NumPy · PyTorch (MPS) · HuggingFace
 Transformers · BGE (bge-base-en-v1.5) · SPECTER2 + proximity adapter · defusedxml ·
 PyMuPDF · pdfplumber · NCBI E-utilities · Unpaywall · Crossref · arXiv API ·
-Phi-3.5 Mini 4-bit via mlx-lm (Apple Silicon local inference)
+Phi-3.5 Mini 4-bit via mlx-lm (Apple Silicon local inference) · Unsloth +
+PEFT/QLoRA (Hugging Face Jobs, A10G) for domain-adaptation fine-tuning
 
 **Scale:**
 
@@ -44,10 +45,13 @@ Phi-3.5 Mini 4-bit via mlx-lm (Apple Silicon local inference)
 | papers parsed | 217 |
 | prose chunks, embedded | 7,833 |
 | peak table rows | not re-measured since v3 (was 1,058; peak-table papers now exempt from filtering) |
-| references resolved | not re-measured since v3 (was 19,674) |
+| references resolved | **11,307 of 12,774 (88.5%)** carry a DOI parsed directly from JATS `<pub-id pub-id-type="doi">`, across 219 JATS-sourced papers (the 61 PDF-sourced papers have no parsed reference list — see `docs/solutions.md`) |
 | inline citations mapped to sentences | not re-verified since v2 |
-| vectors | 7,833 × 768 + 217 × 768 |
-| search latency | exact brute-force cosine, sub-5ms at this scale |
+| vectors | 12,563 × 768 (chunks) + 281 × 768 (papers) |
+| search latency | **83.7 ms p50 / 135.4 ms mean** (full `search_chunks`, 35 real queries × 20 reps = 700 runs, k=5, 281 papers / 12,563 chunks) — see `scripts/bench_latency.py` |
+| fine-tuning corpus (separate from retrieval corpus, see below) | **107,665 abstracts** (Pool A 92,384 / Pool B 15,281 unique) — `data/finetune_corpus/`, see `docs/solutions.md` |
+| QLoRA domain-adaptation fine-tune | Phi-3.5 Mini, held-out perplexity **4.911 → 3.955 (19.5% lower)**, 2,000-example held-out set, trained on 64,000 of 105,665 examples (60.6% of one epoch, step-capped to a fixed compute budget) — see `docs/solutions.md` |
+| citation-check with fine-tuned model | **Verified, 0/3 hallucinated evidence IDs** (2 real domain questions + 1 deliberate out-of-domain probe, real retrieved evidence, ported `answer.py`'s exact system prompt + `check_citations` check onto the fine-tuned model via `scripts/verify_finetuned_citations.py`) — see `docs/solutions.md` |
 
 **Metrics:**
 
@@ -67,10 +71,24 @@ Phi-3.5 Mini 4-bit via mlx-lm (Apple Silicon local inference)
   against an independent extraction of the same table.
 - **Retrieval: 14/14** curated domain queries return relevant top hits
   (mean top-1 cosine 0.784).
-- **Scaling measured, not guessed**: brute-force cosine is 3.1 ms at the full
-  reachable corpus (48k chunks / 148 MB) and stays exact. The memory cliff is at
-  ~2M vectors (≈52k papers → 6.1 GB → 18.9 s/query from swapping) — which is the
-  scale of a prior failed attempt at this project, and a likely cause of it.
+- **Scaling measured, not guessed**: at 281 papers / 12,563 chunks (38.6 MB),
+  the brute-force cosine matmul + argsort itself is 1.8 ms p50 (200 reps) and
+  stays exact. The end-to-end `search_chunks` call a real query actually pays
+  — matmul, argsort, then one SQLite row-fetch per pooled candidate (pool=50)
+  plus the per-paper cap/merge — is **83.7 ms p50 / 135.4 ms mean** (700 runs:
+  35 real `eval_queries.py` questions × 20 reps, k=5; `scripts/bench_latency.py`).
+  Per-candidate row fetches, not the cosine step, now dominate; the prior
+  "3.1 ms" figure measured the matmul alone on a larger (48k-chunk) corpus and
+  didn't include DB I/O — this is the first time the number reflects what a
+  query actually costs end to end. The memory cliff is at ~2M vectors (≈52k
+  papers → 6.1 GB → 18.9 s/query from swapping) — which is the scale of a
+  prior failed attempt at this project, and a likely cause of it.
+- **QLoRA domain-adaptation, measured not estimated: 19.5% lower held-out
+  perplexity** (4.911 base → 3.955 fine-tuned, same 2,000-example held-out
+  set for both). Phi-3.5 Mini + Unsloth QLoRA on 64,000 of 105,665 corpus
+  abstracts. The fine-tuned model still answers only through the existing
+  grounded-retrieval + citation-checking pipeline — this changes domain
+  fluency, not the citation-verification requirement.
 
 **Hard technical problems:**
 
@@ -227,12 +245,56 @@ Ordered by what unblocks the most.
    Neo4j Browser. See `solutions.md` for why this doesn't contradict the
    earlier pgvector/FAISS rejection (visualization need, not a performance
    need) and `questions.md` for the deferred chunk-level MENTIONS edges.
+10. ~~**Fine-tuning corpus (broad, separate from the retrieval corpus).**~~
+    **Done (2026-08-14).** `scripts/fetch_finetune_corpus.py` pulled two
+    PubMed E-utilities pools by MeSH term — Pool A (bulk lipid biochemistry/
+    lipidomics/membrane biophysics) and Pool B (Raman/IR/vibrational
+    spectroscopy vocabulary, not lipid-restricted) — paged by calendar month
+    to work around NCBI's 9,999-record esearch cap. **107,665 unique
+    abstracts** (Pool A 92,384 / Pool B 15,281 unique, 85.8%/14.2% split),
+    stored as flat JSONL in `data/finetune_corpus/`, deliberately never
+    merged into `papers.db`. See `solutions.md` for the full query text and
+    why keeping this corpus separate from the retrieval corpus matters.
+11. ~~**QLoRA fine-tune, Phi-3.5 Mini, domain adaptation.**~~ **Done
+    (2026-08-15).** `scripts/train_domain_adapt.py`, next-token/causal-LM
+    objective on raw title+abstract text (not an instruction format — no
+    specific downstream task shape, the goal is domain fluency; see the
+    script's docstring for the explicit reasoning this task required).
+    Unsloth `FastLanguageModel` QLoRA (4-bit, rank 16) on a Hugging Face Jobs
+    A10G. **Held-out perplexity 4.911 → 3.955 (19.5% lower)**, same
+    2,000-example held-out set used for both measurements. Trained on 64,000
+    of 105,665 examples (60.6% of one epoch) — step-capped to a fixed compute
+    budget, not a full epoch; see `solutions.md` for why one epoch was never
+    the target here. Adapter pushed to
+    `srikarjy025/lipidos-phi3-domain-adapt` (private). This model still only
+    answers through the existing grounded-retrieval + citation-checking
+    pipeline — fine-tuning changed domain fluency, not the citation
+    requirement. See `solutions.md` for the full incident writeup: four
+    GPU-capacity preemptions (`exit code 143`, no Python traceback) across
+    the run, a wrong assumption about `/data` bucket-mount persistence that
+    cost one fully-wasted 2.5-hour run, and the Hub-repo-backed checkpoint
+    resume design that fixed it.
+12. ~~**Verify citation-checking with the fine-tuned model in place.**~~
+    **Done (2026-08-15).** `answer.py`'s citation check runs against an
+    MLX-quantized model, a different weight format from the fine-tune's
+    PEFT/transformers adapter — not directly interchangeable.
+    `scripts/verify_finetuned_citations.py` ports `answer.py`'s exact system
+    prompt and `check_citations` regex onto the actual fine-tuned model
+    (base + adapter via `transformers`/`peft`), tested against real retrieved
+    evidence for 2 domain questions plus 1 deliberate out-of-domain probe.
+    **Result: 0/3 hallucinated evidence IDs** — the out-of-domain question
+    correctly got "the evidence does not answer this" rather than a made-up
+    citation. Caveat: `check_citations` only verifies cited evidence numbers
+    exist, not that the cited evidence's content actually supports the
+    claim — a pre-existing scope limit of the check itself, unchanged by
+    fine-tuning either way.
 
 ## Deliberately not built
 
 - **Vector database (pgvector/FAISS/Chroma).** They solve approximate search at a
-  scale we cannot reach. Brute force is 3.1 ms and *exact* at the full corpus;
-  adopting ANN would trade exactness for speed we do not need, and pgvector-in-Docker
+  scale we cannot reach. Brute force is 83.7 ms p50 end-to-end (1.8 ms for the
+  matmul itself) and *exact* at the full corpus; adopting ANN would trade
+  exactness for speed we do not need, and pgvector-in-Docker
   costs RAM against the model on an 8 GB machine. FAISS becomes correct at ~2M
   vectors — 40× beyond the entire reachable literature.
 - **Blended confidence scores.** Cosine 0.80 is not 80% confidence. Combining a

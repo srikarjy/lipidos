@@ -29,3 +29,11 @@ mlx-lm==0.31.3           # Phi-3.5 Mini inference, Apple Silicon MPS/Metal
 # for RAM with MLX inference, same reason MLX itself runs outside Docker.
 neo4j==5.28.1            # driver, talks to AuraDB over neo4j+s://
 python-dotenv==1.0.1     # loads .env (Aura's own credential-file format)
+
+# Phase 4/5/6 -- dataset export, fine-tuning
+pyarrow==25.0.0          # parquet export for HF Hub
+datasets==2.19.0         # HF datasets library
+huggingface-hub==0.23.4  # HF Hub upload
+accelerate==0.30.1       # distributed training for fine-tuning
+peft==0.11.1             # LoRA fine-tuning
+trl==0.9.4               # RLHF/alignment utilities
