@@ -50,6 +50,16 @@ evidence, printed in a separate panel that is never merged with the raw
 evidence — every generated sentence must cite which evidence item it came
 from, checked automatically against the evidence actually retrieved.
 
+Plus a **fine-tuned model**: Phi-3.5 Mini, QLoRA-adapted (Unsloth) for
+domain fluency on 107,665 lipid/Raman-spectroscopy abstracts — held-out
+perplexity 4.911 → 3.955 (19.5% lower), citation-grounding verified to
+survive the fine-tune. Public on the Hub:
+[adapter](https://huggingface.co/srikarjy025/lipidos-phi3-domain-adapt) ·
+[merged standalone model](https://huggingface.co/srikarjy025/lipidos-phi3-domain-adapt-merged).
+Wired end-to-end with the retrieval + citation-checking pipeline via
+[`scripts/build_evidence.py`](scripts/build_evidence.py) +
+[`scripts/generate_finetuned_answer.py`](scripts/generate_finetuned_answer.py).
+
 ## Status
 
 Build phases from [`lipid-raman-rag-blueprint.md`](lipid-raman-rag-blueprint.md):

@@ -265,8 +265,11 @@ Ordered by what unblocks the most.
     2,000-example held-out set used for both measurements. Trained on 64,000
     of 105,665 examples (60.6% of one epoch) — step-capped to a fixed compute
     budget, not a full epoch; see `solutions.md` for why one epoch was never
-    the target here. Adapter pushed to
-    `srikarjy025/lipidos-phi3-domain-adapt` (private). This model still only
+    the target here. Adapter pushed to and now public at
+    [`srikarjy025/lipidos-phi3-domain-adapt`](https://huggingface.co/srikarjy025/lipidos-phi3-domain-adapt)
+    (merged standalone version:
+    [`srikarjy025/lipidos-phi3-domain-adapt-merged`](https://huggingface.co/srikarjy025/lipidos-phi3-domain-adapt-merged)).
+    This model still only
     answers through the existing grounded-retrieval + citation-checking
     pipeline — fine-tuning changed domain fluency, not the citation
     requirement. See `solutions.md` for the full incident writeup: four
