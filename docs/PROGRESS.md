@@ -288,6 +288,23 @@ Ordered by what unblocks the most.
     exist, not that the cited evidence's content actually supports the
     claim — a pre-existing scope limit of the check itself, unchanged by
     fine-tuning either way.
+13. ~~**Wire Context Builder + the fine-tuned model into one real pipeline.**~~
+    **Done (2026-08-15).** Blueprint Phases 4 (`context_builder.py`) and 5
+    (`raman_integration.py`) already existed but only ever printed merged
+    evidence — neither generated an interpretation, and neither was ever
+    connected to `answer.py` (grepped: zero references) or to any fine-tuned
+    model. Also found: the blueprint's own intended Phase 6 model
+    (`data/finetuned_phi3_mlx/`) has only a training config on disk, no
+    actual adapter weights — it never finished/saved, so tonight's QLoRA
+    adapter is the only complete, working fine-tuned artifact in this
+    project. New split-script pipeline: `scripts/build_evidence.py` (local,
+    Context Builder's 3-track merged/deduped/cited evidence, fast, no GPU)
+    → `scripts/generate_finetuned_answer.py` (remote GPU, loads the
+    fine-tuned model, generates, runs the same `check_citations` as
+    `answer.py`). Split because the fine-tuned model (~7.6 GB bf16) doesn't
+    comfortably fit this project's 8 GB M2 development machine. **Verified
+    working end-to-end**: real question → 5 merged evidence items → cited
+    interpretation referencing evidence #2/#3/#5, zero hallucinated IDs.
 
 ## Deliberately not built
 

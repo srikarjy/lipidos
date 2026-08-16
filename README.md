@@ -59,9 +59,9 @@ Build phases from [`lipid-raman-rag-blueprint.md`](lipid-raman-rag-blueprint.md)
 | 1 — Paper ingestion | Done — 217 papers, 3 tracks, documented model+chunking |
 | 2 — Paper QA (base model, no Raman yet) | Done — retrieval, citation grounding, and Phi-3.5 Mini answer layer all validated |
 | 3 — Lipid knowledge layer | Done (LIPID MAPS) — 29/35 Czamara acronyms resolved; SwissLipids evaluated and deferred (no queryable API) |
-| 4 — Context Builder | Not started |
-| 5 — Raman integration (peaks → CNN/PCA → context) | Not started as specified; `--peak-set` covers part of the intent via direct table lookup |
-| 6 — Fine-tuning | Done — QLoRA (Unsloth) domain-adaptation fine-tune of Phi-3.5 Mini on 64,000 lipid/Raman abstracts; held-out perplexity 4.911 → 3.955 (19.5% lower) |
+| 4 — Context Builder | Done — `context_builder.py` merges prose + peak + paper-similarity tracks into deduped, cited evidence |
+| 5 — Raman integration (peaks → CNN/PCA → context) | Interface + demo done (`raman_integration.py`); real PCA/CNN peak extraction stays external, as designed |
+| 6 — Fine-tuning | Done — QLoRA (Unsloth) domain-adaptation fine-tune of Phi-3.5 Mini on 64,000 lipid/Raman abstracts; held-out perplexity 4.911 → 3.955 (19.5% lower); wired end-to-end with Context Builder + citation-checking via `build_evidence.py` + `generate_finetuned_answer.py` |
 
 Full details, measured numbers, and the reasoning behind every non-obvious
 decision: [`docs/PROGRESS.md`](docs/PROGRESS.md) (status) and
